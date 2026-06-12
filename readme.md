@@ -1,5 +1,7 @@
 # VisionDrive 3D
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/YOUR_USERNAME/visiondrive3d/blob/main/colab_export.ipynb)
+
 Sistem visualisasi mengemudi otonom berbasis YOLO dengan tampilan pseudo-3D gaya Tesla FSD.
 Program membaca video dashcam, mendeteksi kendaraan di sekitar, lalu memproyeksikannya ke tampilan bird's-eye view 3D secara real-time.
 
@@ -24,16 +26,17 @@ Program membaca video dashcam, mendeteksi kendaraan di sekitar, lalu memproyeksi
 ```
 visiondrive3d/
 |
-|-- inf.py              entri utama, jalankan file ini
+|-- inf.py                  entri utama, jalankan file ini
+|-- colab_export.ipynb      notebook untuk export video di Google Colab
 |
 |-- src/
-|   |-- __init__.py     re-export semua modul
-|   |-- config.py       konstanta: warna, ukuran layar, geometri jalan, kamera
-|   |-- projection.py   fungsi proyeksi koordinat 3d ke pixel layar
-|   |-- vehicles.py     class EgoVehicle dan Vehicle
-|   |-- drawing.py      fungsi render: draw_box, draw_road, draw_hud
+|   |-- __init__.py         re-export semua modul
+|   |-- config.py           konstanta: warna, ukuran layar, geometri jalan, kamera
+|   |-- projection.py       fungsi proyeksi koordinat 3d ke pixel layar
+|   |-- vehicles.py         class EgoVehicle dan Vehicle
+|   |-- drawing.py          fungsi render: draw_box, draw_road, draw_hud
 |
-|-- yolo11n.pt          model YOLO yang digunakan untuk deteksi
+|-- yolo11n.pt              model YOLO yang digunakan untuk deteksi
 ```
 
 ---
@@ -95,6 +98,21 @@ Semua parameter utama bisa diubah di `src/config.py` (ukuran layar, warna, geome
 
 ---
 
+## Google Colab Export
+
+Untuk menjalankan tanpa instalasi lokal dan mengekspor hasilnya sebagai file video:
+
+1. Klik badge **Open in Colab** di bagian atas README.
+2. Jalankan cell pertama untuk clone repo (ubah `REPO_URL` ke URL repo kamu).
+3. Upload file video dashcam ketika diminta.
+4. Atur parameter di cell konfigurasi jika perlu.
+5. Jalankan cell export — progres ditampilkan tiap 30 frame.
+6. Download `output.mp4` via cell terakhir, atau preview langsung di notebook.
+
+Tidak perlu pygame window atau display. Render dilakukan secara headless menggunakan `SDL_VIDEODRIVER=dummy`.
+
+---
+
 ## Preview
 ![alt text](image.png)
 
@@ -102,4 +120,3 @@ Semua parameter utama bisa diubah di `src/config.py` (ukuran layar, warna, geome
 
 - Model default `yolo11n.pt` adalah versi nano, cepat tapi akurasi sedang. Ganti ke `yolo11s.pt` atau lebih besar untuk akurasi lebih tinggi.
 - Estimasi kedalaman menggunakan asumsi kamera dashcam standar (`focal = tinggi_frame * 1.2`). Sesuaikan jika kamera berbeda.
-- File `3d.py` adalah eksperimen rendering OpenGL terpisah dan tidak dipakai di workflow utama.
