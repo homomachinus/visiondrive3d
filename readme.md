@@ -120,3 +120,4 @@ Tidak perlu pygame window atau display. Render dilakukan secara headless menggun
 
 - Model default `yolo11n.pt` adalah versi nano, cepat tapi akurasi sedang. Ganti ke `yolo11s.pt` atau lebih besar untuk akurasi lebih tinggi.
 - Estimasi kedalaman menggunakan asumsi kamera dashcam standar (`focal = tinggi_frame * 1.2`). Sesuaikan jika kamera berbeda.
+---
