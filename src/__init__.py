@@ -9,3 +9,4 @@ from .config import (
 from .projection import project, proj_scale
 from .vehicles import Vehicle, EgoVehicle
 from .drawing import draw_box, draw_road, draw_hud
+from .speed import SpeedEstimator

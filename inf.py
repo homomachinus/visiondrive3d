@@ -129,12 +129,12 @@ class InferVisualizer:
         self.video_h = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 
         self.ego    = v.EgoVehicle()
-        self.ego.speed = 10.0   # m/s (~36 km/h)
         self.sim_t  = 0.0
         self.tick   = 0
         self.paused = False
 
         self.tracker = Tracker(alpha=0.15)
+        self.speed_estimator = v.SpeedEstimator()
 
     def _estimate_depth(self, bbox_h, y2, wh, focal_px, horizon_y):
         """hitung estimasi jarak dari tinggi bbox & posisi y"""
@@ -198,6 +198,12 @@ class InferVisualizer:
 
         return results, filter_occlusion(vehicles)
 
+    def _update_speed(self, frame):
+        """Run speed estimator on current frame and sync ego speed."""
+        speed_ms = self.speed_estimator.update(frame)
+        self.ego.speed = max(0.0, speed_ms)
+        return speed_ms
+
     def run(self):
         last_t  = time.time()
         running = True
@@ -233,6 +239,7 @@ class InferVisualizer:
                 self.ego.y += self.ego.speed * dt
 
                 results, detected_vehicles = self._process_frame(frame, focal_px, horizon_y)
+                speed_ms = self._update_speed(frame)
 
                 # buat pip (picture-in-picture) dari frame yolo
                 cam_surf = frame_to_pip(results.plot(), detected_vehicles)
@@ -242,7 +249,9 @@ class InferVisualizer:
             cam_x = self.ego.x
             cam_y = self.ego.y + v.CAM_Y_OFFSET
 
-            v.draw_road(self.screen, cam_x, cam_y, self.tick)
+            speed_ms = getattr(self, '_last_speed_ms', 0.0)
+            v.draw_road(self.screen, cam_x, cam_y,
+                        speed_ms=self.ego.speed, elapsed=self.sim_t)
 
             for obj in detected_vehicles:
                 v.draw_box(
