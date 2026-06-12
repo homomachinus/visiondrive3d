@@ -127,30 +127,27 @@ def draw_hud(surf, ego, tick, sim_t):
 # helper: garis putus‑putus di tengah jalan
 def _draw_center_dashed(surf, cam_x, cam_y, tick, road_half_width, y_near, y_far, dash_len=30, gap=30):
     """draw dashed line di tengah aspal; offset berdasarkan tick untuk animasi"""
-    # cari titik awal dan akhir tengah jalan
-    p_start = project(0, y_near, 0, cam_x, cam_y)
-    p_end   = project(0, y_far, 0, cam_x, cam_y)
-    if not (p_start and p_end):
-        return
-    # hitung panjang total dalam pixel layar (approx menggunakan y difference)
-    total_len = math.hypot(p_end[0]-p_start[0], p_end[1]-p_start[1])
-    # offset untuk animasi (bergerak ke belakang)
-    offset = (tick * 5) % (dash_len + gap)
-    # mulai dari p_start, gambar dash/gap secara berulang
-    cur = 0.0
-    while cur < total_len:
-        dash_start = cur + offset
-        dash_end   = dash_start + dash_len
-        if dash_start < total_len:
-            # interpolasi posisi
-            t0 = dash_start / total_len
-            t1 = min(dash_end, total_len) / total_len
-            x0 = p_start[0] + (p_end[0]-p_start[0]) * t0
-            y0 = p_start[1] + (p_end[1]-p_start[1]) * t0
-            x1 = p_start[0] + (p_end[0]-p_start[0]) * t1
-            y1 = p_start[1] + (p_end[1]-p_start[1]) * t1
-            pygame.draw.line(surf, (255,255,255), (x0, y0), (x1, y1), 2)
-        cur += dash_len + gap
+    # Cari titik awal dan akhir dalam world‑space (x = 0)
+    world_start_y = cam_y + y_near
+    world_end_y   = cam_y + y_far
+
+    # Panjang dash & gap dalam world‑space (meter). 5 m cocok untuk kecepatan standar.
+    dash_len_world = 5.0
+    gap_world      = 5.0
+
+    # Offset world‑space sehingga dash bergerak ke belakang seiring tick (kecepatan 5 m per tick)
+    offset_world = (tick * 5.0) % (dash_len_world + gap_world)
+
+    y = y_near + offset_world
+    while y < y_far:
+        start_y = cam_y + y
+        end_y   = start_y + dash_len_world
+        # Proyeksikan kedua titik
+        p0 = project(0, start_y - cam_y, 0, cam_x, cam_y)  # relatif ke cam_y
+        p1 = project(0, end_y   - cam_y, 0, cam_x, cam_y)
+        if p0 and p1:
+            pygame.draw.line(surf, (255,255,255), p0, p1, 2)
+        y += dash_len_world + gap_world
 
 # helper: aksesoris pinggir jalan (lampu & pohon)
 def _draw_side_accessories(surf, cam_x, cam_y, tick, road_half_width, y_near, y_far):
