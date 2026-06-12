@@ -1,6 +1,6 @@
 # VisionDrive 3D
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/0xfrq/visiondrive3d/blob/main/colab_export.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/homomachinus/visiondrive3d/blob/main/colab_export.ipynb)
 
 Sistem visualisasi mengemudi otonom berbasis YOLO dengan tampilan pseudo-3D gaya Tesla FSD.
 Program membaca video dashcam, mendeteksi kendaraan di sekitar, lalu memproyeksikannya ke tampilan bird's-eye view 3D secara real-time.
