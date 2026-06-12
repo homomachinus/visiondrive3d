@@ -5,7 +5,9 @@ from .config import (
     C_TANAH, C_ASPAL, C_TROTOAR, C_TROTOAR_ED,
     ROAD_W, TROTOAR_W, LANE_W,
 )
+import math
 from .projection import project
+
 
 
 def draw_box(surf, cam_x, cam_y, wx, wy, ww, wl, wh, color,
@@ -69,6 +71,7 @@ def draw_box(surf, cam_x, cam_y, wx, wy, ww, wl, wh, color,
 
 
 def draw_road(surf, cam_x, cam_y, tick):
+    """gambar aspal, trotoar, tanah, garis tengah putus‑putus, dan aksesoris pinggir"""
     """gambar aspal, trotoar, dan tanah di kiri-kanan"""
     y_near = cam_y + 1
     y_far  = cam_y + 120
@@ -111,8 +114,78 @@ def draw_road(surf, cam_x, cam_y, tick):
     pts = road_pts(-rw, rw, y_near, y_far)
     if len(pts) == 4:
         pygame.draw.polygon(surf, C_ASPAL, pts)
+        # garis putus‑putus tengah jalan (animasi)
+        _draw_center_dashed(surf, cam_x, cam_y, tick, rw, y_near, y_far)
+        # aksesoris pinggir (lampu & pohon)
+        _draw_side_accessories(surf, cam_x, cam_y, tick, rw, y_near, y_far)
 
 
 def draw_hud(surf, ego, tick, sim_t):
     """placeholder hud, belum diimplementasi"""
     pass
+
+# helper: garis putus‑putus di tengah jalan
+def _draw_center_dashed(surf, cam_x, cam_y, tick, road_half_width, y_near, y_far, dash_len=30, gap=30):
+    """draw dashed line di tengah aspal; offset berdasarkan tick untuk animasi"""
+    # cari titik awal dan akhir tengah jalan
+    p_start = project(0, y_near, 0, cam_x, cam_y)
+    p_end   = project(0, y_far, 0, cam_x, cam_y)
+    if not (p_start and p_end):
+        return
+    # hitung panjang total dalam pixel layar (approx menggunakan y difference)
+    total_len = math.hypot(p_end[0]-p_start[0], p_end[1]-p_start[1])
+    # offset untuk animasi (bergerak ke belakang)
+    offset = (tick * 5) % (dash_len + gap)
+    # mulai dari p_start, gambar dash/gap secara berulang
+    cur = 0.0
+    while cur < total_len:
+        dash_start = cur + offset
+        dash_end   = dash_start + dash_len
+        if dash_start < total_len:
+            # interpolasi posisi
+            t0 = dash_start / total_len
+            t1 = min(dash_end, total_len) / total_len
+            x0 = p_start[0] + (p_end[0]-p_start[0]) * t0
+            y0 = p_start[1] + (p_end[1]-p_start[1]) * t0
+            x1 = p_start[0] + (p_end[0]-p_start[0]) * t1
+            y1 = p_start[1] + (p_end[1]-p_start[1]) * t1
+            pygame.draw.line(surf, (255,255,255), (x0, y0), (x1, y1), 2)
+        cur += dash_len + gap
+
+# helper: aksesoris pinggir jalan (lampu & pohon)
+def _draw_side_accessories(surf, cam_x, cam_y, tick, road_half_width, y_near, y_far):
+    """gambar tiang lampu & pohon sederhana di kedua sisi, bergerak bersamaan dengan kamera"""
+    # posisi contoh: tiap 40 meter satu tiang
+    spacing = 40.0
+    for side in (-1, 1):
+        # posisi relatif x di luar aspal
+        x_pos = side * (road_half_width + 5)
+        # iterasi sepanjang jalan
+        y = y_near
+        while y < y_far:
+            # hitung world y posisi tiang
+            world_y = cam_y + y
+            # gambar tiang (garis vertikal) dan lampu (lingkaran)
+            top = project(x_pos, world_y, 0.0, cam_x, cam_y)
+            bottom = project(x_pos, world_y+2.0, 0.0, cam_x, cam_y)
+            if top and bottom:
+                pygame.draw.line(surf, (150,150,150), top, bottom, 2)
+                # lampu
+                lamp_center = project(x_pos, world_y+2.2, 0.0, cam_x, cam_y)
+                if lamp_center:
+                    pygame.draw.circle(surf, (255,200,0), (int(lamp_center[0]), int(lamp_center[1])), 4)
+            # pohon di sisi lain (alternatif)
+            if side == -1:
+                tree_x = x_pos - 2.5
+                trunk_top = project(tree_x, world_y, 0.0, cam_x, cam_y)
+                trunk_bot = project(tree_x, world_y+1.5, 0.0, cam_x, cam_y)
+                if trunk_top and trunk_bot:
+                    pygame.draw.line(surf, (101,67,33), trunk_top, trunk_bot, 2)
+                    # kanopi
+                    canopy = project(tree_x, world_y+1.8, 0.0, cam_x, cam_y)
+                    if canopy:
+                        pygame.draw.circle(surf, (34,139,34), (int(canopy[0]), int(canopy[1])), 5)
+            y += spacing
+
+# modify draw_road to call the new helpers
+
