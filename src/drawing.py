@@ -125,64 +125,41 @@ def draw_hud(surf, ego, tick, sim_t):
     pass
 
 # helper: garis putus‑putus di tengah jalan
-def _draw_center_dashed(surf, cam_x, cam_y, tick, road_half_width, y_near, y_far, dash_len=30, gap=30):
-    """draw dashed line di tengah aspal; offset berdasarkan tick untuk animasi"""
-    # Cari titik awal dan akhir dalam world‑space (x = 0)
-    world_start_y = cam_y + y_near
-    world_end_y   = cam_y + y_far
-
-    # Panjang dash & gap dalam world‑space (meter). 5 m cocok untuk kecepatan standar.
-    dash_len_world = 5.0
-    gap_world      = 5.0
-
-    # Offset world‑space sehingga dash bergerak ke belakang seiring tick (kecepatan 5 m per tick)
-    offset_world = (tick * 5.0) % (dash_len_world + gap_world)
-
-    y = y_near + offset_world
+def _draw_center_dashed(surf, cam_x, cam_y, tick, road_half_width, y_near, y_far):
+    dash_len = 5.0
+    gap = 5.0
+    offset = (tick * 0.5) % (dash_len + gap)
+    y = y_near - offset
     while y < y_far:
-        start_y = cam_y + y
-        end_y   = start_y + dash_len_world
-        # Proyeksikan kedua titik
-        p0 = project(0, start_y - cam_y, 0, cam_x, cam_y)  # relatif ke cam_y
-        p1 = project(0, end_y   - cam_y, 0, cam_x, cam_y)
+        p0 = project(0, y, 0, cam_x, cam_y)
+        p1 = project(0, y + dash_len, 0, cam_x, cam_y)
         if p0 and p1:
-            pygame.draw.line(surf, (255,255,255), p0, p1, 2)
-        y += dash_len_world + gap_world
+            pygame.draw.line(surf, (255, 255, 255), p0, p1, 2)
+        y += dash_len + gap
 
 # helper: aksesoris pinggir jalan (lampu & pohon)
 def _draw_side_accessories(surf, cam_x, cam_y, tick, road_half_width, y_near, y_far):
-    """gambar tiang lampu & pohon sederhana di kedua sisi, bergerak bersamaan dengan kamera"""
-    # posisi contoh: tiap 40 meter satu tiang
-    spacing = 40.0
+    offset = (tick * 0.5) % 40.0
     for side in (-1, 1):
-        # posisi relatif x di luar aspal
         x_pos = side * (road_half_width + 5)
-        # iterasi sepanjang jalan
-        y = y_near
+        y = y_near - offset
         while y < y_far:
-            # hitung world y posisi tiang
-            world_y = cam_y + y
-            # gambar tiang (garis vertikal) dan lampu (lingkaran)
-            top = project(x_pos, world_y, 0.0, cam_x, cam_y)
-            bottom = project(x_pos, world_y+2.0, 0.0, cam_x, cam_y)
+            top = project(x_pos, y, 0.0, cam_x, cam_y)
+            bottom = project(x_pos, y + 2.0, 0.0, cam_x, cam_y)
             if top and bottom:
-                pygame.draw.line(surf, (150,150,150), top, bottom, 2)
-                # lampu
-                lamp_center = project(x_pos, world_y+2.2, 0.0, cam_x, cam_y)
-                if lamp_center:
-                    pygame.draw.circle(surf, (255,200,0), (int(lamp_center[0]), int(lamp_center[1])), 4)
-            # pohon di sisi lain (alternatif)
+                pygame.draw.line(surf, (150, 150, 150), top, bottom, 2)
+                lamp = project(x_pos, y + 2.2, 0.0, cam_x, cam_y)
+                if lamp:
+                    pygame.draw.circle(surf, (255, 200, 0), (int(lamp[0]), int(lamp[1])), 4)
             if side == -1:
-                tree_x = x_pos - 2.5
-                trunk_top = project(tree_x, world_y, 0.0, cam_x, cam_y)
-                trunk_bot = project(tree_x, world_y+1.5, 0.0, cam_x, cam_y)
-                if trunk_top and trunk_bot:
-                    pygame.draw.line(surf, (101,67,33), trunk_top, trunk_bot, 2)
-                    # kanopi
-                    canopy = project(tree_x, world_y+1.8, 0.0, cam_x, cam_y)
-                    if canopy:
-                        pygame.draw.circle(surf, (34,139,34), (int(canopy[0]), int(canopy[1])), 5)
-            y += spacing
+                tx = x_pos - 2.5
+                tt = project(tx, y, 0.0, cam_x, cam_y)
+                tb = project(tx, y + 1.5, 0.0, cam_x, cam_y)
+                if tt and tb:
+                    pygame.draw.line(surf, (101, 67, 33), tt, tb, 2)
+                    c = project(tx, y + 1.8, 0.0, cam_x, cam_y)
+                    if c:
+                        pygame.draw.circle(surf, (34, 139, 34), (int(c[0]), int(c[1])), 5)
+            y += 40.0
 
 # modify draw_road to call the new helpers
-
