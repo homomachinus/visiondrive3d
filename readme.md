@@ -95,6 +95,9 @@ Semua parameter utama bisa diubah di `src/config.py` (ukuran layar, warna, geome
 
 ---
 
+## Preview
+![alt text](image.png)
+
 ## Catatan
 
 - Model default `yolo11n.pt` adalah versi nano, cepat tapi akurasi sedang. Ganti ke `yolo11s.pt` atau lebih besar untuk akurasi lebih tinggi.
