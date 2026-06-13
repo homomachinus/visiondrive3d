@@ -1,6 +1,6 @@
 """
 FSD Autonomous Driving Visualizer — standalone single file
-Gabungan: config + projection + draw_box (car-style) + draw_road + main loop
+(Dynamic Scale & Fixed Z-Sorting / Overlap Bug)
 """
 
 import pygame
@@ -29,9 +29,6 @@ ROAD_W     = 14.0
 TROTOAR_W  =  3.5
 LANE_W     = ROAD_W / 3
 
-DASH_LEN = 1.0
-DASH_GAP = 1.5
-
 CAM_Y_OFFSET = -14.0
 CAM_Z        =   9.0
 FOCAL        = 420.0
@@ -49,47 +46,38 @@ def project(wx, wy, wz, cam_x, cam_y):
     py = H / 2 - (dz / dy) * FOCAL * 0.72
     return (int(px), int(py))
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  DRAW BOX — CAR STYLE
+#  DRAW BOX
 # ══════════════════════════════════════════════════════════════════════════════
 def draw_box(surf, cam_x, cam_y, wx, wy, ww, wl, wh, color,
              selected=False, is_ego=False, wz=0.0):
     hw = ww / 2
     hl = wl / 2
-
     corners = [project(wx+sx, wy+sy, wz+sz, cam_x, cam_y)
                for sx, sy, sz in [
                    (-hw,-hl,0),(hw,-hl,0),(hw,hl,0),(-hw,hl,0),
                    (-hw,-hl,wh),(hw,-hl,wh),(hw,hl,wh),(-hw,hl,wh),
                ]]
-
     if len([c for c in corners if c]) < 4:
         return
-
     r, g, b  = C_EGO if is_ego else color
     edge_c   = C_EGO if is_ego else (color if selected else C_OTHER_DIM)
     lw       = 2 if (is_ego or selected) else 1
-
     fs = pygame.Surface((W, H), pygame.SRCALPHA)
-
     def poly(idxs, c):
         pts = [corners[i] for i in idxs if corners[i]]
         if len(pts) >= 3:
             try: pygame.draw.polygon(fs, c, pts)
             except: pass
-
     poly([4,5,6,7], (r, g, b, 70))
     poly([3,0,4,7], (int(r*.55), int(g*.55), int(b*.55), 150))
     poly([1,2,6,5], (int(r*.55), int(g*.55), int(b*.55), 150))
     poly([0,1,5,4], (r, g, b, 130))
     poly([2,3,7,6], (r, g, b, 130))
     surf.blit(fs, (0, 0))
-
     for a, b in [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)]:
         if corners[a] and corners[b]:
             pygame.draw.line(surf, edge_c, corners[a], corners[b], lw)
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DRAW ROAD
@@ -133,13 +121,11 @@ def draw_road(surf, cam_x, cam_y, speed_ms=0.0, elapsed=0.0):
 
     _draw_accessories(surf, cam_x, cam_y, speed_ms, elapsed, rw, y_near, y_far)
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  TREE SYSTEM
+#  TREE SYSTEM & ACCESSORIES
 # ══════════════════════════════════════════════════════════════════════════════
-
-TREE_STEP   = 5.0
-LAMP_STEP   = 20.0
+TREE_STEP  = 12.0  # Diperlebar agar penataan lebih rapi dan elegan
+LAMP_STEP  = 24.0
 
 TREE_VARIANTS = [
     {'trunk_h': 2.2, 'trunk_w': 0.30,
@@ -156,11 +142,8 @@ TREE_VARIANTS = [
      'canopy': [(0.0,1.3,(24,82,34)),(1.2,1.7,(31,98,42)),(2.4,1.5,(38,112,48)),(3.3,1.1,(45,126,53)),(4.1,0.6,(52,138,57))]},
 ]
 
-SPRITE_REF_DY   = 30.0
-SPRITE_BASE_PX  = 160
-
-_tree_sprites: dict = {}
-
+SPRITE_REF_DY = 30.0
+_tree_sprites_raw:   dict = {}
 
 def _build_tree_sprite(vi: int) -> pygame.Surface:
     v   = TREE_VARIANTS[vi]
@@ -175,24 +158,18 @@ def _build_tree_sprite(vi: int) -> pygame.Surface:
 
     pw = int((tw + max_r * 2 + 0.5) * px_per_wu) + 8
     ph = int(max_z * pz_per_wu) + 8
-    pw = max(pw, 12)
-    ph = max(ph, 12)
+    pw = max(pw, 12);  ph = max(ph, 12)
 
     spr = pygame.Surface((pw, ph), pygame.SRCALPHA)
-    ox = pw // 2
-    oy = ph
+    ox = pw // 2;  oy = ph
 
     def s2p(wu_x, wu_z):
-        return (int(ox + wu_x * px_per_wu),
-                int(oy - wu_z * pz_per_wu))
+        return (int(ox + wu_x * px_per_wu), int(oy - wu_z * pz_per_wu))
 
-    trunk_c = (65, 42, 22)
-    trunk_d = (45, 28, 12)
+    trunk_c = (65, 42, 22);  trunk_d = (45, 28, 12)
     hw = tw / 2
-
-    bl = s2p(-hw, 0);  br = s2p(hw, 0)
-    tl = s2p(-hw, th); tr = s2p(hw, th)
-    if all(p for p in [bl, br, tl, tr]):
+    bl = s2p(-hw,0); br = s2p(hw,0); tl = s2p(-hw,th); tr = s2p(hw,th)
+    if all([bl,br,tl,tr]):
         pygame.draw.polygon(spr, (*trunk_c, 230), [bl, br, tr, tl])
         pygame.draw.polygon(spr, (*trunk_d, 180), [bl, br, tr, tl], 1)
 
@@ -201,111 +178,102 @@ def _build_tree_sprite(vi: int) -> pygame.Surface:
         cx, cy = s2p(0, z)
         rx = max(3, int(r_wu * px_per_wu))
         ry = max(2, int(r_wu * pz_per_wu * 0.75))
-
         shadow = (max(0,base_col[0]-20), max(0,base_col[1]-25), max(0,base_col[2]-20))
         hi     = (min(255,base_col[0]+22), min(255,base_col[1]+28), min(255,base_col[2]+20))
-
-        pygame.draw.ellipse(spr, (*shadow, 180),
-                            (cx-rx, cy-ry+ry//3, rx*2, ry + ry//2))
-        pygame.draw.ellipse(spr, (*base_col, 235),
-                            (cx-rx, cy-ry, rx*2, ry*2))
+        pygame.draw.ellipse(spr, (*shadow, 180), (cx-rx, cy-ry+ry//3, rx*2, ry+ry//2))
+        pygame.draw.ellipse(spr, (*base_col, 235), (cx-rx, cy-ry, rx*2, ry*2))
         hi_r = max(2, rx//3)
-        pygame.draw.ellipse(spr, (*hi, 90),
-                            (cx - rx//3 - hi_r, cy - ry//3 - hi_r//2, hi_r*2, hi_r))
+        pygame.draw.ellipse(spr, (*hi, 90), (cx-rx//3-hi_r, cy-ry//3-hi_r//2, hi_r*2, hi_r))
 
     return spr
 
-
-def _get_tree_sprite(vi: int) -> pygame.Surface:
-    if vi not in _tree_sprites:
-        _tree_sprites[vi] = _build_tree_sprite(vi)
-    return _tree_sprites[vi]
-
+def _variant_for_slot(world_slot: int, lane_seed: int) -> int:
+    h = (world_slot * 1_000_003 + lane_seed * 999_983) & 0x7FFF_FFFF
+    return h % len(TREE_VARIANTS)
 
 def _draw_tree_at(surf, cam_x, cam_y, wx, wy, vi: int):
     dy = wy - cam_y
     if dy < 0.5:
         return
-
-    spr  = _get_tree_sprite(vi)
-    sw0, sh0 = spr.get_size()
-
-    scale = (FOCAL / dy) / (FOCAL / SPRITE_REF_DY)
-    scale = max(0.08, min(scale, 8.0))
-
-    sw = max(2, int(sw0 * scale))
-    sh = max(2, int(sh0 * scale))
-
+        
     base = project(wx, wy, 0, cam_x, cam_y)
     if not base:
         return
 
-    try:
-        scaled = pygame.transform.smoothscale(spr, (sw, sh))
-    except:
+    if vi not in _tree_sprites_raw:
+        _tree_sprites_raw[vi] = _build_tree_sprite(vi)
+    raw_spr = _tree_sprites_raw[vi]
+
+    scale = SPRITE_REF_DY / dy
+    if scale > 20.0:
         return
 
-    surf.blit(scaled, (base[0] - sw // 2, base[1] - sh))
+    sw = max(2, int(raw_spr.get_width() * scale))
+    sh = max(2, int(raw_spr.get_height() * scale))
 
+    spr = pygame.transform.scale(raw_spr, (sw, sh))
+    surf.blit(spr, (base[0] - sw // 2, base[1] - sh))
 
-# Lookup tabel variant — 4000 slot agar global_slot tidak overlap antar kombinasi
-_SLOT_RNG    = random.Random(42)
-_SLOT_LOOKUP = [_SLOT_RNG.randint(0, len(TREE_VARIANTS)-1) for _ in range(4000)]
-
-
-def _slot_vi(slot: int) -> int:
-    return _SLOT_LOOKUP[slot % len(_SLOT_LOOKUP)]
-
+def _draw_lamp_at(surf, cam_x, cam_y, x_lamp, y, sign):
+    pole_b = project(x_lamp, y, 0.0,  cam_x, cam_y)
+    pole_t = project(x_lamp, y, 3.8,  cam_x, cam_y)
+    arm_e  = project(x_lamp + sign*0.65, y, 4.05, cam_x, cam_y)
+    bulb   = project(x_lamp + sign*0.65, y, 4.10, cam_x, cam_y)
+    
+    if pole_b and pole_t:
+        pygame.draw.line(surf, (72, 78, 95), pole_b, pole_t, 2)
+    if pole_t and arm_e:
+        pygame.draw.line(surf, (82, 88, 108), pole_t, arm_e, 2)
+    if bulb:
+        pygame.draw.circle(surf, (255, 218, 135), bulb, 3)
+        gs = pygame.Surface((12, 12), pygame.SRCALPHA)
+        pygame.draw.circle(gs, (255, 200, 80, 40), (6, 6), 6)
+        surf.blit(gs, (bulb[0]-6, bulb[1]-6))
 
 def _draw_accessories(surf, cam_x, cam_y, speed_ms, elapsed, rw, y_near, y_far):
-    # total jarak yang sudah ditempuh (world units)
     total_dist = speed_ms * elapsed
+    draw_items = []
 
-    # ── Pohon ────────────────────────────────────────────────────────────────
+    # ── Kumpulkan Posisi Pohon ───────────────────────────────────────────────
     for side_idx, sign in enumerate((-1, 1)):
         for row, x_base in enumerate([
             sign * (rw + TROTOAR_W + 1.2),
-            sign * (rw + TROTOAR_W + 4.5),
+            sign * (rw + TROTOAR_W + 5.5), # Digeser sedikit lebih jauh ke samping
         ]):
-            # Row-1 digeser setengah langkah agar tidak sejajar dengan row-0
             row_dist    = total_dist + (TREE_STEP * 0.5 if row == 1 else 0.0)
-            tree_offset = row_dist % TREE_STEP          # fraksi dalam satu slot
-            base_slot   = int(row_dist // TREE_STEP)    # slot absolut frame ini
-
-            # Seed unik per sisi × baris agar pohon kiri ≠ pohon kanan
-            slot_seed = (side_idx * 2 + row) * 500
+            tree_offset = row_dist % TREE_STEP
+            base_slot   = int(row_dist // TREE_STEP)
+            lane_seed = side_idx * 2 + row
 
             y = y_near - tree_offset
             s = 0
             while y < y_far:
-                # global_slot = posisi dunia absolut → SELALU sama untuk koordinat itu
-                # Dengan ini variant tidak pernah berubah saat pohon mendekat
-                vi = _slot_vi(slot_seed + base_slot + s)
-                _draw_tree_at(surf, cam_x, cam_y, x_base, y, vi)
+                world_slot = base_slot + s
+                vi = _variant_for_slot(world_slot, lane_seed)
+                draw_items.append(('tree', y, x_base, vi))
                 y += TREE_STEP
                 s += 1
 
-    # ── Lampu jalan ──────────────────────────────────────────────────────────
+    # ── Kumpulkan Posisi Lampu ───────────────────────────────────────────────
     lamp_offset = total_dist % LAMP_STEP
     for sign in (-1, 1):
         x_lamp = sign * (rw + TROTOAR_W * 0.5)
         y = y_near - lamp_offset
         while y < y_far:
-            pole_b = project(x_lamp, y, 0.0,  cam_x, cam_y)
-            pole_t = project(x_lamp, y, 3.8,  cam_x, cam_y)
-            arm_e  = project(x_lamp + sign*0.65, y, 4.05, cam_x, cam_y)
-            bulb   = project(x_lamp + sign*0.65, y, 4.10, cam_x, cam_y)
-            if pole_b and pole_t:
-                pygame.draw.line(surf, (72, 78, 95), pole_b, pole_t, 2)
-            if pole_t and arm_e:
-                pygame.draw.line(surf, (82, 88, 108), pole_t, arm_e, 2)
-            if bulb:
-                pygame.draw.circle(surf, (255, 218, 135), bulb, 3)
-                gs = pygame.Surface((12, 12), pygame.SRCALPHA)
-                pygame.draw.circle(gs, (255, 200, 80, 40), (6, 6), 6)
-                surf.blit(gs, (bulb[0]-6, bulb[1]-6))
+            draw_items.append(('lamp', y, x_lamp, sign))
             y += LAMP_STEP
 
+    # ── FIX: Z-Sorting (Urutkan objek paling jauh / y tertinggi, ke terdekat) 
+    draw_items.sort(key=lambda item: item[1], reverse=True)
+
+    # ── Gambar Semua Objek secara Berurutan ──────────────────────────────────
+    for item in draw_items:
+        if item[0] == 'tree':
+            _, y, x_base, vi = item
+            _draw_tree_at(surf, cam_x, cam_y, x_base, y, vi)
+        elif item[0] == 'lamp':
+            _, y, x_lamp, sign = item
+            _draw_lamp_at(surf, cam_x, cam_y, x_lamp, y, sign)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  VEHICLES
@@ -334,16 +302,13 @@ class EgoVehicle:
         self.x, self.y = 0.0, 0.0
         self.speed = 8.0
         self.accel = 0.0
-        self.steer = 0.0
         self.w, self.l, self.h = 2.0, 4.6, 1.55
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 def main():
     pygame.init()
-    global F_XS
     try:
         fn = pygame.font.match_font('dejavusansmono,consolas,couriernew,monospace')
         F_XS = pygame.font.Font(fn, 10)
@@ -351,7 +316,7 @@ def main():
         F_XS = pygame.font.SysFont('monospace', 10)
 
     screen = pygame.display.set_mode((W, H))
-    pygame.display.set_caption("FSD Autonomous Driving Visualizer")
+    pygame.display.set_caption("FSD Autonomous Driving Visualizer - Fixed Z-Sorting")
     clock  = pygame.time.Clock()
 
     ego = EgoVehicle()
@@ -364,9 +329,9 @@ def main():
             spd = rng.uniform(4.5, 9.0)
             vehicles.append(Vehicle(y, lane, spd, rng))
 
-    elapsed  = 0.0
-    paused   = False
-    last_t   = time.time()
+    elapsed = 0.0
+    paused  = False
+    last_t  = time.time()
 
     while True:
         now = time.time()
@@ -388,7 +353,6 @@ def main():
 
         if not paused:
             elapsed += dt
-
             target = 8.0 + 2.5 * math.sin(elapsed * 0.18)
             ego.accel = max(-3.5, min(2.5, (target - ego.speed) * 1.8))
             ego.speed = max(1.0, min(18.0, ego.speed + ego.accel * dt))
@@ -404,9 +368,7 @@ def main():
                     v.y = 10 + rng.uniform(0, 10)
                     v.speed = rng.uniform(4.5, 10.0)
 
-        # ── RENDER ────────────────────────────────────────────────────────────
         screen.fill(C_BG)
-
         cam_x = ego.x
         cam_y = ego.y + CAM_Y_OFFSET
 
@@ -425,14 +387,13 @@ def main():
         if paused:
             po = pygame.Surface((W, H), pygame.SRCALPHA)
             pygame.draw.rect(po, (0,0,0,80), (0,0,W,H))
-            f = pygame.font.SysFont('monospace', 22)
+            f  = pygame.font.SysFont('monospace', 22)
             pt = f.render("[ PAUSED — SPACE to resume ]", True, (220,180,50))
             screen.blit(po, (0,0))
             screen.blit(pt, (W//2 - pt.get_width()//2, H//2 - 15))
 
         pygame.display.flip()
         clock.tick(FPS)
-
 
 if __name__ == "__main__":
     print("FSD Visualizer — Kontrol: SPACE=pause  +/-=kecepatan  ESC=keluar")

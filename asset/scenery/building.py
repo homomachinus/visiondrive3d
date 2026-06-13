@@ -1,6 +1,6 @@
 """
 FSD Autonomous Driving Visualizer — standalone single file
-Gabungan: config + projection + draw_box (car-style) + draw_road + main loop
+(Dense Cityscape: Zero-Gap Blocks, Double-Row Buildings, Culling, Forward Motion)
 """
 
 import pygame
@@ -14,14 +14,13 @@ import time
 W, H   = 1280, 760
 FPS    = 60
 
-C_BG         = (10,  11,  16)
+C_BG         = (12,  14,  18)
 C_TANAH      = (16,  18,  22)
 C_ASPAL      = (22,  24,  32)
 C_TROTOAR    = (32,  35,  45)
 C_TROTOAR_ED = (44,  50,  65)
 
 C_EGO        = (30,  140, 255)
-C_EGO_GLOW   = (0,   80,  200)
 C_OTHER      = (160, 170, 185)
 C_OTHER_DIM  = (80,  90,  105)
 
@@ -29,74 +28,128 @@ ROAD_W     = 14.0
 TROTOAR_W  =  3.5
 LANE_W     = ROAD_W / 3
 
-DASH_LEN = 1.0
-DASH_GAP = 1.5
-
 CAM_Y_OFFSET = -14.0
 CAM_Z        =   9.0
 FOCAL        = 420.0
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  PROJECTION
+#  PROJECTION (Kendaraan & Jalan)
 # ══════════════════════════════════════════════════════════════════════════════
 def project(wx, wy, wz, cam_x, cam_y):
     dx = wx - cam_x
     dy = wy - cam_y
     dz = wz - CAM_Z
-    if dy < 0.5:
+    if dy < 0.1:
         return None
     px = W / 2 + (dx / dy) * FOCAL
     py = H / 2 - (dz / dy) * FOCAL * 0.72
     return (int(px), int(py))
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  DRAW BOX — CAR STYLE
+#  DRAW VEHICLE BOX
 # ══════════════════════════════════════════════════════════════════════════════
 def draw_box(surf, cam_x, cam_y, wx, wy, ww, wl, wh, color,
              selected=False, is_ego=False, wz=0.0):
     hw = ww / 2
     hl = wl / 2
-
     corners = [project(wx+sx, wy+sy, wz+sz, cam_x, cam_y)
                for sx, sy, sz in [
                    (-hw,-hl,0),(hw,-hl,0),(hw,hl,0),(-hw,hl,0),
                    (-hw,-hl,wh),(hw,-hl,wh),(hw,hl,wh),(-hw,hl,wh),
                ]]
-
     if len([c for c in corners if c]) < 4:
         return
-
     r, g, b  = C_EGO if is_ego else color
     edge_c   = C_EGO if is_ego else (color if selected else C_OTHER_DIM)
     lw       = 2 if (is_ego or selected) else 1
-
     fs = pygame.Surface((W, H), pygame.SRCALPHA)
-
     def poly(idxs, c):
         pts = [corners[i] for i in idxs if corners[i]]
         if len(pts) >= 3:
             try: pygame.draw.polygon(fs, c, pts)
             except: pass
-
     poly([4,5,6,7], (r, g, b, 70))
     poly([3,0,4,7], (int(r*.55), int(g*.55), int(b*.55), 150))
     poly([1,2,6,5], (int(r*.55), int(g*.55), int(b*.55), 150))
     poly([0,1,5,4], (r, g, b, 130))
     poly([2,3,7,6], (r, g, b, 130))
     surf.blit(fs, (0, 0))
-
     for a, b in [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)]:
         if corners[a] and corners[b]:
             pygame.draw.line(surf, edge_c, corners[a], corners[b], lw)
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  DRAW SOLID BOX (Gedung)
+# ══════════════════════════════════════════════════════════════════════════════
+def draw_solid_box(surf, cam_x, cam_y, wx, wy, ww, wl, wh, color):
+    hw = ww / 2
+    hl = wl / 2
+    
+    pts3d = [
+        (wx - hw, wy - hl, 0),  
+        (wx + hw, wy - hl, 0),  
+        (wx + hw, wy + hl, 0),  
+        (wx - hw, wy + hl, 0),  
+        (wx - hw, wy - hl, wh), 
+        (wx + hw, wy - hl, wh), 
+        (wx + hw, wy + hl, wh), 
+        (wx - hw, wy + hl, wh), 
+    ]
+
+    def clip_face(indices):
+        face_pts = [pts3d[i] for i in indices]
+        min_y = cam_y + 0.5
+        clipped = []
+        for i in range(len(face_pts)):
+            p1 = face_pts[i]
+            p2 = face_pts[(i + 1) % len(face_pts)]
+            
+            if p1[1] >= min_y:
+                clipped.append(p1)
+                
+            if (p1[1] >= min_y > p2[1]) or (p1[1] < min_y <= p2[1]):
+                dy_diff = p2[1] - p1[1]
+                if abs(dy_diff) > 0.0001:
+                    t = (min_y - p1[1]) / dy_diff
+                    ix = p1[0] + t * (p2[0] - p1[0])
+                    iy = min_y
+                    iz = p1[2] + t * (p2[2] - p1[2])
+                    clipped.append((ix, iy, iz))
+        return clipped
+
+    def proj(p):
+        dx = p[0] - cam_x
+        dy = p[1] - cam_y
+        dz = p[2] - CAM_Z
+        px = W / 2 + (dx / dy) * FOCAL
+        py = H / 2 - (dz / dy) * FOCAL * 0.72
+        return (int(px), int(py))
+
+    def draw_face(indices, shade):
+        clipped_pts3d = clip_face(indices)
+        if len(clipped_pts3d) >= 3:
+            screen_pts = [proj(p) for p in clipped_pts3d]
+            r, g, b = color
+            c = (int(r * shade), int(g * shade), int(b * shade))
+            pygame.draw.polygon(surf, c, screen_pts)
+            pygame.draw.polygon(surf, (20, 22, 28), screen_pts, 1)
+
+    if wx < cam_x:
+        draw_face([1, 2, 6, 5], 0.60) # Sisi Kanan
+    else:
+        draw_face([0, 3, 7, 4], 0.60) # Sisi Kiri
+        
+    draw_face([0, 1, 5, 4], 0.80)     # Sisi Depan
+    
+    if CAM_Z > wh:
+        draw_face([4, 5, 6, 7], 1.0)  # Sisi Atap (Hanya jika kamera lebih tinggi)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DRAW ROAD
 # ══════════════════════════════════════════════════════════════════════════════
-def draw_road(surf, cam_x, cam_y, speed_ms=0.0, elapsed=0.0):
-    y_near = cam_y + 1
-    y_far  = cam_y + 120
+def draw_road(surf, cam_x, cam_y):
+    y_near = cam_y + 0.5
+    y_far  = cam_y + 150
 
     def road_pts(x_left, x_right, y_n, y_f):
         p = [
@@ -111,7 +164,7 @@ def draw_road(surf, cam_x, cam_y, speed_ms=0.0, elapsed=0.0):
     tw = TROTOAR_W
 
     for sign in (-1, 1):
-        pts = road_pts(sign*(rw+tw), sign*(rw+tw+200), y_near, y_far)
+        pts = road_pts(sign*(rw+tw), sign*(rw+tw+300), y_near, y_far)
         if len(pts) == 4:
             pygame.draw.polygon(surf, C_TANAH, pts)
 
@@ -131,181 +184,84 @@ def draw_road(surf, cam_x, cam_y, speed_ms=0.0, elapsed=0.0):
     if len(pts) == 4:
         pygame.draw.polygon(surf, C_ASPAL, pts)
 
-    _draw_accessories(surf, cam_x, cam_y, speed_ms, elapsed, rw, y_near, y_far)
-
-
 # ══════════════════════════════════════════════════════════════════════════════
-#  TREE SYSTEM
+#  BUILDING SYSTEM (Super Padat - Double Row)
 # ══════════════════════════════════════════════════════════════════════════════
+BUILDING_STEP = 12.0  # Langkah yang lebih pendek
 
-TREE_STEP   = 5.0
-LAMP_STEP   = 20.0
+def _get_building_props(world_slot, side, row):
+    h1 = (world_slot * 73856093 ^ side * 19349663 ^ row * 827419) & 0xFFFFFFFF
+    rng = random.Random(h1)
+    
+    b_type = rng.random()
+    
+    if row == 0:
+        # Baris 0: Nempel dengan jalan (Ruko / Gedung Medium)
+        if b_type < 0.65:
+            w = rng.uniform(5.0, 10.0)
+            l = rng.uniform(11.5, 12.0) # Panjang gedung dipaksa nyaris sama dengan STEP agar dempet
+            h = rng.uniform(4.0, 9.0)
+        elif b_type < 0.90:
+            w = rng.uniform(8.0, 15.0)
+            l = rng.uniform(11.5, 12.0)
+            h = rng.uniform(12.0, 25.0) 
+        else:
+            w = rng.uniform(10.0, 18.0)
+            l = rng.uniform(11.5, 12.0)
+            h = rng.uniform(25.0, 45.0) 
+        gap = rng.uniform(0.5, 2.5) # Jarak sangat dekat dengan trotoar
+    else:
+        # Baris 1: Di belakang baris 0 (Gedung Tinggi / Pencakar Langit)
+        if b_type < 0.30:
+            w = rng.uniform(10.0, 18.0)
+            l = rng.uniform(11.5, 12.0)
+            h = rng.uniform(15.0, 30.0) 
+        elif b_type < 0.80:
+            w = rng.uniform(15.0, 25.0)
+            l = rng.uniform(11.5, 12.0)
+            h = rng.uniform(40.0, 70.0)
+        else:
+            w = rng.uniform(20.0, 35.0)
+            l = rng.uniform(11.5, 12.0)
+            h = rng.uniform(70.0, 120.0)
+        gap = rng.uniform(14.0, 18.0) # Jarak di-offset ke belakang baris pertama
+    
+    # Gradasi Warna: Baris belakang sedikit lebih gelap (Atmospheric Depth)
+    c_base = int(rng.uniform(60, 160))
+    if row == 1: 
+        c_base = max(30, c_base - 25)
+    color = (c_base, c_base, c_base)
+    
+    return w, l, h, color, gap
 
-TREE_VARIANTS = [
-    {'trunk_h': 2.2, 'trunk_w': 0.30,
-     'canopy': [(0.0,1.6,(28,95,38)),(0.9,1.9,(35,110,45)),(1.8,1.5,(42,125,50)),(2.5,0.9,(50,140,55))]},
-    {'trunk_h': 4.0, 'trunk_w': 0.22,
-     'canopy': [(0.0,1.1,(25,85,35)),(1.1,1.4,(32,100,42)),(2.2,1.2,(38,115,48)),(3.1,0.9,(44,128,52)),(3.9,0.5,(52,140,58))]},
-    {'trunk_h': 3.0, 'trunk_w': 0.38,
-     'canopy': [(-0.3,2.2,(22,80,32)),(0.8,2.6,(30,100,40)),(2.0,2.4,(36,112,46)),(3.0,1.8,(42,124,50)),(3.9,1.1,(50,136,56))]},
-    {'trunk_h': 2.8, 'trunk_w': 0.30,
-     'canopy': [(0.0,1.4,(26,88,36)),(1.0,1.8,(33,105,44)),(2.1,1.6,(40,118,50)),(3.0,1.0,(48,132,54))]},
-    {'trunk_h': 1.6, 'trunk_w': 0.18,
-     'canopy': [(0.0,1.0,(30,100,40)),(0.8,1.2,(38,115,48)),(1.5,0.8,(46,130,54))]},
-    {'trunk_h': 3.5, 'trunk_w': 0.26,
-     'canopy': [(0.0,1.3,(24,82,34)),(1.2,1.7,(31,98,42)),(2.4,1.5,(38,112,48)),(3.3,1.1,(45,126,53)),(4.1,0.6,(52,138,57))]},
-]
-
-SPRITE_REF_DY   = 30.0
-SPRITE_BASE_PX  = 160
-
-_tree_sprites: dict = {}
-
-
-def _build_tree_sprite(vi: int) -> pygame.Surface:
-    v   = TREE_VARIANTS[vi]
-    th  = v['trunk_h']
-    tw  = v['trunk_w']
-
-    px_per_wu = FOCAL / SPRITE_REF_DY
-    pz_per_wu = px_per_wu * 0.72
-
-    max_z = th + max(zo + r for zo, r, _ in v['canopy'])
-    max_r = max(r for _, r, _ in v['canopy'])
-
-    pw = int((tw + max_r * 2 + 0.5) * px_per_wu) + 8
-    ph = int(max_z * pz_per_wu) + 8
-    pw = max(pw, 12)
-    ph = max(ph, 12)
-
-    spr = pygame.Surface((pw, ph), pygame.SRCALPHA)
-    ox = pw // 2
-    oy = ph
-
-    def s2p(wu_x, wu_z):
-        return (int(ox + wu_x * px_per_wu),
-                int(oy - wu_z * pz_per_wu))
-
-    trunk_c = (65, 42, 22)
-    trunk_d = (45, 28, 12)
-    hw = tw / 2
-
-    bl = s2p(-hw, 0);  br = s2p(hw, 0)
-    tl = s2p(-hw, th); tr = s2p(hw, th)
-    if all(p for p in [bl, br, tl, tr]):
-        pygame.draw.polygon(spr, (*trunk_c, 230), [bl, br, tr, tl])
-        pygame.draw.polygon(spr, (*trunk_d, 180), [bl, br, tr, tl], 1)
-
-    for z_off, r_wu, base_col in v['canopy']:
-        z = th + z_off
-        cx, cy = s2p(0, z)
-        rx = max(3, int(r_wu * px_per_wu))
-        ry = max(2, int(r_wu * pz_per_wu * 0.75))
-
-        shadow = (max(0,base_col[0]-20), max(0,base_col[1]-25), max(0,base_col[2]-20))
-        hi     = (min(255,base_col[0]+22), min(255,base_col[1]+28), min(255,base_col[2]+20))
-
-        pygame.draw.ellipse(spr, (*shadow, 180),
-                            (cx-rx, cy-ry+ry//3, rx*2, ry + ry//2))
-        pygame.draw.ellipse(spr, (*base_col, 235),
-                            (cx-rx, cy-ry, rx*2, ry*2))
-        hi_r = max(2, rx//3)
-        pygame.draw.ellipse(spr, (*hi, 90),
-                            (cx - rx//3 - hi_r, cy - ry//3 - hi_r//2, hi_r*2, hi_r))
-
-    return spr
-
-
-def _get_tree_sprite(vi: int) -> pygame.Surface:
-    if vi not in _tree_sprites:
-        _tree_sprites[vi] = _build_tree_sprite(vi)
-    return _tree_sprites[vi]
-
-
-def _draw_tree_at(surf, cam_x, cam_y, wx, wy, vi: int):
-    dy = wy - cam_y
-    if dy < 0.5:
-        return
-
-    spr  = _get_tree_sprite(vi)
-    sw0, sh0 = spr.get_size()
-
-    scale = (FOCAL / dy) / (FOCAL / SPRITE_REF_DY)
-    scale = max(0.08, min(scale, 8.0))
-
-    sw = max(2, int(sw0 * scale))
-    sh = max(2, int(sh0 * scale))
-
-    base = project(wx, wy, 0, cam_x, cam_y)
-    if not base:
-        return
-
-    try:
-        scaled = pygame.transform.smoothscale(spr, (sw, sh))
-    except:
-        return
-
-    surf.blit(scaled, (base[0] - sw // 2, base[1] - sh))
-
-
-# Lookup tabel variant — 4000 slot agar global_slot tidak overlap antar kombinasi
-_SLOT_RNG    = random.Random(42)
-_SLOT_LOOKUP = [_SLOT_RNG.randint(0, len(TREE_VARIANTS)-1) for _ in range(4000)]
-
-
-def _slot_vi(slot: int) -> int:
-    return _SLOT_LOOKUP[slot % len(_SLOT_LOOKUP)]
-
-
-def _draw_accessories(surf, cam_x, cam_y, speed_ms, elapsed, rw, y_near, y_far):
-    # total jarak yang sudah ditempuh (world units)
+def get_buildings(speed_ms, elapsed, rw, y_near, y_far):
+    buildings = []
     total_dist = speed_ms * elapsed
 
-    # ── Pohon ────────────────────────────────────────────────────────────────
-    for side_idx, sign in enumerate((-1, 1)):
-        for row, x_base in enumerate([
-            sign * (rw + TROTOAR_W + 1.2),
-            sign * (rw + TROTOAR_W + 4.5),
-        ]):
-            # Row-1 digeser setengah langkah agar tidak sejajar dengan row-0
-            row_dist    = total_dist + (TREE_STEP * 0.5 if row == 1 else 0.0)
-            tree_offset = row_dist % TREE_STEP          # fraksi dalam satu slot
-            base_slot   = int(row_dist // TREE_STEP)    # slot absolut frame ini
-
-            # Seed unik per sisi × baris agar pohon kiri ≠ pohon kanan
-            slot_seed = (side_idx * 2 + row) * 500
-
-            y = y_near - tree_offset
+    for side in (-1, 1):
+        for row in (1, 0): # Generate baris belakang (1), lalu baris depan (0)
+            b_offset  = total_dist % BUILDING_STEP
+            base_slot = int(total_dist // BUILDING_STEP)
+            
+            y = y_near - b_offset
             s = 0
             while y < y_far:
-                # global_slot = posisi dunia absolut → SELALU sama untuk koordinat itu
-                # Dengan ini variant tidak pernah berubah saat pohon mendekat
-                vi = _slot_vi(slot_seed + base_slot + s)
-                _draw_tree_at(surf, cam_x, cam_y, x_base, y, vi)
-                y += TREE_STEP
+                world_slot = base_slot + s
+                w, l, h, color, gap = _get_building_props(world_slot, side, row)
+                x_center = side * (rw + TROTOAR_W + gap + w / 2)
+                
+                buildings.append({
+                    'type': 'building',
+                    'x': x_center,
+                    'y': y,
+                    'w': w, 'l': l, 'h': h,
+                    'color': color,
+                    'row': row
+                })
+                y += BUILDING_STEP
                 s += 1
-
-    # ── Lampu jalan ──────────────────────────────────────────────────────────
-    lamp_offset = total_dist % LAMP_STEP
-    for sign in (-1, 1):
-        x_lamp = sign * (rw + TROTOAR_W * 0.5)
-        y = y_near - lamp_offset
-        while y < y_far:
-            pole_b = project(x_lamp, y, 0.0,  cam_x, cam_y)
-            pole_t = project(x_lamp, y, 3.8,  cam_x, cam_y)
-            arm_e  = project(x_lamp + sign*0.65, y, 4.05, cam_x, cam_y)
-            bulb   = project(x_lamp + sign*0.65, y, 4.10, cam_x, cam_y)
-            if pole_b and pole_t:
-                pygame.draw.line(surf, (72, 78, 95), pole_b, pole_t, 2)
-            if pole_t and arm_e:
-                pygame.draw.line(surf, (82, 88, 108), pole_t, arm_e, 2)
-            if bulb:
-                pygame.draw.circle(surf, (255, 218, 135), bulb, 3)
-                gs = pygame.Surface((12, 12), pygame.SRCALPHA)
-                pygame.draw.circle(gs, (255, 200, 80, 40), (6, 6), 6)
-                surf.blit(gs, (bulb[0]-6, bulb[1]-6))
-            y += LAMP_STEP
-
+            
+    return buildings
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  VEHICLES
@@ -332,18 +288,14 @@ class Vehicle:
 class EgoVehicle:
     def __init__(self):
         self.x, self.y = 0.0, 0.0
-        self.speed = 8.0
-        self.accel = 0.0
-        self.steer = 0.0
+        self.speed = 12.0
         self.w, self.l, self.h = 2.0, 4.6, 1.55
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════════════════════════════════════════
 def main():
     pygame.init()
-    global F_XS
     try:
         fn = pygame.font.match_font('dejavusansmono,consolas,couriernew,monospace')
         F_XS = pygame.font.Font(fn, 10)
@@ -351,7 +303,7 @@ def main():
         F_XS = pygame.font.SysFont('monospace', 10)
 
     screen = pygame.display.set_mode((W, H))
-    pygame.display.set_caption("FSD Autonomous Driving Visualizer")
+    pygame.display.set_caption("FSD Autonomous Driving Visualizer - Dense City")
     clock  = pygame.time.Clock()
 
     ego = EgoVehicle()
@@ -361,12 +313,12 @@ def main():
     for lane in range(3):
         for j in range(6):
             y   = 10 + j * 16 + rng.uniform(-3, 3)
-            spd = rng.uniform(4.5, 9.0)
+            spd = rng.uniform(6.0, 10.0)
             vehicles.append(Vehicle(y, lane, spd, rng))
 
-    elapsed  = 0.0
-    paused   = False
-    last_t   = time.time()
+    elapsed = 0.0
+    paused  = False
+    last_t  = time.time()
 
     while True:
         now = time.time()
@@ -382,57 +334,69 @@ def main():
                 elif ev.key == pygame.K_SPACE:
                     paused = not paused
                 elif ev.key in (pygame.K_PLUS, pygame.K_EQUALS):
-                    ego.speed = min(ego.speed + 1, 20)
+                    ego.speed = min(ego.speed + 2.0, 25.0)
                 elif ev.key == pygame.K_MINUS:
-                    ego.speed = max(ego.speed - 1, 1)
+                    ego.speed = max(ego.speed - 2.0, 1.0)
 
         if not paused:
             elapsed += dt
-
-            target = 8.0 + 2.5 * math.sin(elapsed * 0.18)
-            ego.accel = max(-3.5, min(2.5, (target - ego.speed) * 1.8))
-            ego.speed = max(1.0, min(18.0, ego.speed + ego.accel * dt))
-
+            
             for v in vehicles:
                 rel = v.speed - ego.speed
-                v.y -= rel * dt
-                if v.y < -18:
-                    v.y = 95 + rng.uniform(0, 30)
-                    v.speed = rng.uniform(4.5, 10.0)
+                v.y += rel * dt 
+                
+                if v.y < -20: 
+                    v.y = 150 + rng.uniform(0, 30)
+                    v.speed = rng.uniform(5.0, 10.0)
                     v.x = LANES_X[v.lane] + rng.uniform(-0.2, 0.2)
-                elif v.y > 130:
-                    v.y = 10 + rng.uniform(0, 10)
-                    v.speed = rng.uniform(4.5, 10.0)
+                elif v.y > 200:
+                    v.y = -10 - rng.uniform(0, 20)
+                    v.speed = rng.uniform(12.0, 16.0)
+                    v.x = LANES_X[v.lane] + rng.uniform(-0.2, 0.2)
 
-        # ── RENDER ────────────────────────────────────────────────────────────
         screen.fill(C_BG)
-
         cam_x = ego.x
         cam_y = ego.y + CAM_Y_OFFSET
 
-        draw_road(screen, cam_x, cam_y, ego.speed, elapsed)
+        draw_road(screen, cam_x, cam_y)
 
-        for v in sorted(vehicles, key=lambda v: -v.y):
-            selected = abs(v.x - ego.x) < LANE_W * 1.1 and 1.5 < v.y < 60
-            draw_box(screen, cam_x, cam_y,
-                     v.x, v.y, v.w, v.l, v.h,
-                     v.color, selected=selected)
+        buildings = get_buildings(ego.speed, elapsed, ROAD_W/2, cam_y - 20, cam_y + 300)
 
-        draw_box(screen, cam_x, cam_y,
-                 ego.x, ego.y, ego.w, ego.l, ego.h,
-                 C_EGO, is_ego=True)
+        render_list = []
+        render_list.append({'type': 'ego', 'obj': ego, 'y_near': ego.y - ego.l/2, 'abs_x': abs(ego.x)})
+        
+        for v in vehicles:
+            render_list.append({'type': 'vehicle', 'obj': v, 'y_near': v.y - v.l/2, 'abs_x': abs(v.x)})
+            
+        for b in buildings:
+            render_list.append({'type': 'building', 'obj': b, 'y_near': b['y'] - b['l']/2, 'abs_x': abs(b['x'])})
+
+        # Z-Sorting tingkat lanjut: Urutkan dari Y terjauh. Jika Y sama, gambar objek yg X-nya paling luar (gedung baris belakang) dulu.
+        render_list.sort(key=lambda item: (item['y_near'], item['abs_x']), reverse=True)
+
+        for item in render_list:
+            if item['type'] == 'vehicle':
+                v = item['obj']
+                selected = abs(v.x - ego.x) < LANE_W * 1.1 and 1.5 < v.y < 60
+                draw_box(screen, cam_x, cam_y, v.x, v.y, v.w, v.l, v.h, v.color, selected=selected)
+                
+            elif item['type'] == 'ego':
+                draw_box(screen, cam_x, cam_y, ego.x, ego.y, ego.w, ego.l, ego.h, C_EGO, is_ego=True)
+                
+            elif item['type'] == 'building':
+                b = item['obj']
+                draw_solid_box(screen, cam_x, cam_y, b['x'], b['y'], b['w'], b['l'], b['h'], b['color'])
 
         if paused:
             po = pygame.Surface((W, H), pygame.SRCALPHA)
             pygame.draw.rect(po, (0,0,0,80), (0,0,W,H))
-            f = pygame.font.SysFont('monospace', 22)
+            f  = pygame.font.SysFont('monospace', 22)
             pt = f.render("[ PAUSED — SPACE to resume ]", True, (220,180,50))
             screen.blit(po, (0,0))
             screen.blit(pt, (W//2 - pt.get_width()//2, H//2 - 15))
 
         pygame.display.flip()
         clock.tick(FPS)
-
 
 if __name__ == "__main__":
     print("FSD Visualizer — Kontrol: SPACE=pause  +/-=kecepatan  ESC=keluar")
