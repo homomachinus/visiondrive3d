@@ -1,6 +1,6 @@
 """
 FSD Autonomous Driving Visualizer — standalone single file
-(Dense Cityscape: Zero-Gap Blocks, Double-Row Buildings, Culling, Forward Motion)
+(Dense Cityscape, AR HUD, All Traffic Lights ON, Forward Motion)
 """
 
 import pygame
@@ -145,6 +145,69 @@ def draw_solid_box(surf, cam_x, cam_y, wx, wy, ww, wl, wh, color):
         draw_face([4, 5, 6, 7], 1.0)  # Sisi Atap (Hanya jika kamera lebih tinggi)
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  DRAW TRAFFIC LIGHT
+# ══════════════════════════════════════════════════════════════════════════════
+def draw_traffic_light(surf, cam_x, cam_y, tl_x, tl_y, sign):
+    if tl_y - cam_y < 0.5:
+        return
+
+    # Proyeksi tiang utama dan penyangga
+    p_base = project(tl_x, tl_y, 0.0, cam_x, cam_y)
+    p_top  = project(tl_x, tl_y, 6.0, cam_x, cam_y)
+    
+    arm_x = tl_x - sign * (ROAD_W * 0.45) # Tiang menjulur ke tengah jalan
+    p_arm  = project(arm_x, tl_y, 6.0, cam_x, cam_y)
+
+    # Gambar tiang
+    if p_base and p_top:
+        pygame.draw.line(surf, (50, 55, 65), p_base, p_top, 4)
+    if p_top and p_arm:
+        pygame.draw.line(surf, (50, 55, 65), p_top, p_arm, 3)
+
+    # Box Lampu
+    bw = 0.35
+    bh_top = 5.8
+    bh_bot = 4.2
+    
+    box_pts3d = [
+        (arm_x - bw, tl_y, bh_top),
+        (arm_x + bw, tl_y, bh_top),
+        (arm_x + bw, tl_y, bh_bot),
+        (arm_x - bw, tl_y, bh_bot)
+    ]
+    
+    box_proj = [project(px, py, pz, cam_x, cam_y) for px, py, pz in box_pts3d]
+    if len([p for p in box_proj if p]) == 4:
+        # Gambar kotak hitam
+        pygame.draw.polygon(surf, (15, 15, 15), box_proj)
+        pygame.draw.polygon(surf, (40, 40, 40), box_proj, 1)
+
+        # SEMUA LAMPU MENYALA TERANG (Mode Placeholder)
+        c_red = (255, 40, 40)
+        c_yel = (255, 200, 20)
+        c_grn = (40, 255, 80)
+        
+        # Posisi ketinggian masing-masing lampu (Z-axis)
+        lz_red = 5.45
+        lz_yel = 5.00
+        lz_grn = 4.55
+
+        # Render ketiga lampu
+        for c, lz in [(c_red, lz_red), (c_yel, lz_yel), (c_grn, lz_grn)]:
+            lp = project(arm_x, tl_y, lz, cam_x, cam_y)
+            if lp:
+                dy = tl_y - cam_y
+                radius = max(2, int(FOCAL * 0.15 / dy))
+                
+                # Gambar inti lampu yang solid
+                pygame.draw.circle(surf, c, lp, radius)
+                
+                # Efek pendaran (Glow) selalu aktif untuk semuanya
+                glow_surf = pygame.Surface((radius*4, radius*4), pygame.SRCALPHA)
+                pygame.draw.circle(glow_surf, (*c, 60), (radius*2, radius*2), radius*2)
+                surf.blit(glow_surf, (lp[0] - radius*2, lp[1] - radius*2))
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  DRAW ROAD
 # ══════════════════════════════════════════════════════════════════════════════
 def draw_road(surf, cam_x, cam_y):
@@ -185,9 +248,9 @@ def draw_road(surf, cam_x, cam_y):
         pygame.draw.polygon(surf, C_ASPAL, pts)
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  BUILDING SYSTEM (Super Padat - Double Row)
+#  BUILDING SYSTEM
 # ══════════════════════════════════════════════════════════════════════════════
-BUILDING_STEP = 12.0  # Langkah yang lebih pendek
+BUILDING_STEP = 12.0
 
 def _get_building_props(world_slot, side, row):
     h1 = (world_slot * 73856093 ^ side * 19349663 ^ row * 827419) & 0xFFFFFFFF
@@ -196,10 +259,9 @@ def _get_building_props(world_slot, side, row):
     b_type = rng.random()
     
     if row == 0:
-        # Baris 0: Nempel dengan jalan (Ruko / Gedung Medium)
         if b_type < 0.65:
             w = rng.uniform(5.0, 10.0)
-            l = rng.uniform(11.5, 12.0) # Panjang gedung dipaksa nyaris sama dengan STEP agar dempet
+            l = rng.uniform(11.5, 12.0)
             h = rng.uniform(4.0, 9.0)
         elif b_type < 0.90:
             w = rng.uniform(8.0, 15.0)
@@ -209,9 +271,8 @@ def _get_building_props(world_slot, side, row):
             w = rng.uniform(10.0, 18.0)
             l = rng.uniform(11.5, 12.0)
             h = rng.uniform(25.0, 45.0) 
-        gap = rng.uniform(0.5, 2.5) # Jarak sangat dekat dengan trotoar
+        gap = rng.uniform(0.5, 2.5)
     else:
-        # Baris 1: Di belakang baris 0 (Gedung Tinggi / Pencakar Langit)
         if b_type < 0.30:
             w = rng.uniform(10.0, 18.0)
             l = rng.uniform(11.5, 12.0)
@@ -224,9 +285,8 @@ def _get_building_props(world_slot, side, row):
             w = rng.uniform(20.0, 35.0)
             l = rng.uniform(11.5, 12.0)
             h = rng.uniform(70.0, 120.0)
-        gap = rng.uniform(14.0, 18.0) # Jarak di-offset ke belakang baris pertama
+        gap = rng.uniform(14.0, 18.0)
     
-    # Gradasi Warna: Baris belakang sedikit lebih gelap (Atmospheric Depth)
     c_base = int(rng.uniform(60, 160))
     if row == 1: 
         c_base = max(30, c_base - 25)
@@ -239,7 +299,7 @@ def get_buildings(speed_ms, elapsed, rw, y_near, y_far):
     total_dist = speed_ms * elapsed
 
     for side in (-1, 1):
-        for row in (1, 0): # Generate baris belakang (1), lalu baris depan (0)
+        for row in (1, 0):
             b_offset  = total_dist % BUILDING_STEP
             base_slot = int(total_dist // BUILDING_STEP)
             
@@ -262,6 +322,36 @@ def get_buildings(speed_ms, elapsed, rw, y_near, y_far):
                 s += 1
             
     return buildings
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TRAFFIC LIGHT SYSTEM
+# ══════════════════════════════════════════════════════════════════════════════
+TL_STEP = 150.0  # Traffic light muncul setiap 150 meter
+
+def get_traffic_lights(speed_ms, elapsed, rw, y_near, y_far):
+    tls = []
+    total_dist = speed_ms * elapsed
+    offset = total_dist % TL_STEP
+    base_slot = int(total_dist // TL_STEP)
+    
+    y = y_near - offset
+    s = 0
+    while y < y_far:
+        world_slot = base_slot + s
+        
+        for sign in (-1, 1):
+            tl_x = sign * (rw + TROTOAR_W * 0.5)
+            tls.append({
+                'type': 'traffic_light',
+                'x': tl_x,
+                'y': y,
+                'sign': sign
+            })
+        
+        y += TL_STEP
+        s += 1
+        
+    return tls
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  VEHICLES
@@ -303,7 +393,7 @@ def main():
         F_XS = pygame.font.SysFont('monospace', 10)
 
     screen = pygame.display.set_mode((W, H))
-    pygame.display.set_caption("FSD Autonomous Driving Visualizer - Dense City")
+    pygame.display.set_caption("FSD Autonomous Driving Visualizer - AR HUD & All Traffic Lights ON")
     clock  = pygame.time.Clock()
 
     ego = EgoVehicle()
@@ -360,7 +450,9 @@ def main():
 
         draw_road(screen, cam_x, cam_y)
 
+        # Kumpulkan semua elemen dunia
         buildings = get_buildings(ego.speed, elapsed, ROAD_W/2, cam_y - 20, cam_y + 300)
+        traffic_lights = get_traffic_lights(ego.speed, elapsed, ROAD_W/2, cam_y - 20, cam_y + 300)
 
         render_list = []
         render_list.append({'type': 'ego', 'obj': ego, 'y_near': ego.y - ego.l/2, 'abs_x': abs(ego.x)})
@@ -370,8 +462,11 @@ def main():
             
         for b in buildings:
             render_list.append({'type': 'building', 'obj': b, 'y_near': b['y'] - b['l']/2, 'abs_x': abs(b['x'])})
+            
+        for tl in traffic_lights:
+            render_list.append({'type': 'traffic_light', 'obj': tl, 'y_near': tl['y'], 'abs_x': abs(tl['x'])})
 
-        # Z-Sorting tingkat lanjut: Urutkan dari Y terjauh. Jika Y sama, gambar objek yg X-nya paling luar (gedung baris belakang) dulu.
+        # Z-Sorting tingkat lanjut berdasarkan sumbu Y (jarak ke depan) dan X (posisi terluar)
         render_list.sort(key=lambda item: (item['y_near'], item['abs_x']), reverse=True)
 
         for item in render_list:
@@ -386,6 +481,21 @@ def main():
             elif item['type'] == 'building':
                 b = item['obj']
                 draw_solid_box(screen, cam_x, cam_y, b['x'], b['y'], b['w'], b['l'], b['h'], b['color'])
+                
+                # AR HUD TEKS DIMENSI GEDUNG
+                dy = b['y'] - cam_y
+                if dy > 0.5:
+                    top_pt = project(b['x'], b['y'], b['h'] + 1.5, cam_x, cam_y)
+                    if top_pt:
+                        dim_text = f"{b['l']:.1f}x{b['w']:.1f}x{b['h']:.1f}m"
+                        txt_surf = F_XS.render(dim_text, True, (160, 170, 185)) 
+                        tx, ty = top_pt
+                        if -50 <= tx <= W + 50 and -50 <= ty <= H + 50:
+                            screen.blit(txt_surf, (tx - txt_surf.get_width() // 2, ty - txt_surf.get_height()))
+
+            elif item['type'] == 'traffic_light':
+                tl = item['obj']
+                draw_traffic_light(screen, cam_x, cam_y, tl['x'], tl['y'], tl['sign'])
 
         if paused:
             po = pygame.Surface((W, H), pygame.SRCALPHA)
